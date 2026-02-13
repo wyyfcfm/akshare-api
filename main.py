@@ -10,6 +10,7 @@ from typing import Optional, Literal
 import akshare as ak
 import pandas as pd
 import datetime
+import math
 
 app = FastAPI(
     title="AKShare Financial API",
@@ -38,85 +39,108 @@ class FinancialResponse(BaseModel):
     message: str = ""
 
 
-def search_a_stock(keyword: str) -> dict:
-    """搜索 A 股股票代码"""
+def _search_stock_em(keyword: str, market_filter: str = None) -> dict:
+    """
+    使用东方财富搜索 API 搜索股票（统一搜索，速度快）
+
+    market_filter:
+        None  - 不限市场
+        "A"   - 仅 A 股（沪A + 深A）
+        "HK"  - 仅港股
+    """
+    import requests as _requests
     try:
-        # 使用东方财富搜索
-        df = ak.stock_info_a_code_name()
-        # 精确匹配
-        exact_match = df[df['name'] == keyword]
-        if not exact_match.empty:
-            row = exact_match.iloc[0]
-            code = row['code']
-            market = "SH" if code.startswith(('6', '9')) else "SZ"
-            return {
-                "found": True,
-                "code": code,
-                "name": row['name'],
-                "symbol": f"{market}{code}",
-                "market": "A"
-            }
-        # 模糊匹配
-        fuzzy_match = df[df['name'].str.contains(keyword, na=False)]
-        if not fuzzy_match.empty:
-            row = fuzzy_match.iloc[0]
-            code = row['code']
-            market = "SH" if code.startswith(('6', '9')) else "SZ"
-            return {
-                "found": True,
-                "code": code,
-                "name": row['name'],
-                "symbol": f"{market}{code}",
-                "market": "A"
-            }
+        url = "https://searchapi.eastmoney.com/api/suggest/get"
+        params = {
+            "input": keyword,
+            "type": 14,
+            "token": "D43BF722C8E33BDC906FB84D85E326E8",
+            "count": 10,
+        }
+        r = _requests.get(url, params=params, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        items = data.get("QuotationCodeTable", {}).get("Data", [])
+        if not items:
+            return {"found": False}
+
+        # MktNum: "0"=深A(SZ), "1"=沪A(SH), "116"=港股(HK)
+        # 注意: API 返回的 MktNum 是字符串类型
+        MKT_A = {"0", "1"}      # 深A, 沪A
+        MKT_HK = {"116"}        # 港股
+
+        for item in items:
+            mkt = str(item.get("MktNum", ""))
+            code = item.get("Code", "")
+            name = item.get("Name", "")
+
+            if market_filter == "A" and mkt not in MKT_A:
+                continue
+            if market_filter == "HK" and mkt not in MKT_HK:
+                continue
+            if market_filter is None and mkt not in (MKT_A | MKT_HK):
+                continue
+
+            if mkt in MKT_A:
+                # A 股: 构造 SH/SZ 前缀的 symbol
+                prefix = "SH" if mkt == "1" else "SZ"
+                return {
+                    "found": True,
+                    "code": code,
+                    "name": name,
+                    "symbol": f"{prefix}{code}",
+                    "market": "A"
+                }
+            elif mkt in MKT_HK:
+                return {
+                    "found": True,
+                    "code": code,
+                    "name": name,
+                    "symbol": code,
+                    "market": "HK"
+                }
+
         return {"found": False}
     except Exception as e:
         return {"found": False, "error": str(e)}
+
+
+def search_a_stock(keyword: str) -> dict:
+    """搜索 A 股股票代码"""
+    return _search_stock_em(keyword, market_filter="A")
 
 
 def search_hk_stock(keyword: str) -> dict:
     """搜索港股股票代码"""
-    try:
-        df = ak.stock_hk_spot_em()
-        # 精确匹配
-        exact_match = df[df['名称'] == keyword]
-        if not exact_match.empty:
-            row = exact_match.iloc[0]
-            return {
-                "found": True,
-                "code": row['代码'],
-                "name": row['名称'],
-                "symbol": row['代码'],
-                "market": "HK"
-            }
-        # 模糊匹配
-        fuzzy_match = df[df['名称'].str.contains(keyword, na=False)]
-        if not fuzzy_match.empty:
-            row = fuzzy_match.iloc[0]
-            return {
-                "found": True,
-                "code": row['代码'],
-                "name": row['名称'],
-                "symbol": row['代码'],
-                "market": "HK"
-            }
-        return {"found": False}
-    except Exception as e:
-        return {"found": False, "error": str(e)}
+    return _search_stock_em(keyword, market_filter="HK")
 
 
 def safe_to_dict(df: pd.DataFrame, max_rows: int = 4) -> list:
-    """安全地将 DataFrame 转为 dict 列表，处理 NaN 和 NaT"""
+    """安全地将 DataFrame 转为 dict 列表，处理 NaN/NaT/Inf 等 JSON 不兼容值"""
     if df is None or df.empty:
         return []
     subset = df.head(max_rows).copy()
-    # 将 NaN/NaT 替换为 None，确保 JSON 序列化不出错
-    subset = subset.where(subset.notna(), None)
     # 转换 Timestamp 类型为字符串
     for col in subset.columns:
         if pd.api.types.is_datetime64_any_dtype(subset[col]):
             subset[col] = subset[col].astype(str).replace("NaT", None)
-    return subset.to_dict(orient='records')
+    # 转成 records
+    records = subset.to_dict(orient='records')
+    # 清理每条记录中的 NaN / Inf / -Inf
+    cleaned = []
+    for record in records:
+        clean_record = {}
+        for k, v in record.items():
+            if v is None:
+                clean_record[k] = None
+            elif isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                clean_record[k] = None
+            elif isinstance(v, pd.Timestamp):
+                clean_record[k] = str(v) if pd.notna(v) else None
+            else:
+                clean_record[k] = v
+        cleaned.append(clean_record)
+    return cleaned
 
 
 # A股核心财务字段（精简，避免返回 300+ 列导致超时/过大）
@@ -246,6 +270,7 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
 
 
 @app.post("/api/financial-report")

@@ -115,11 +115,12 @@ def search_hk_stock(keyword: str) -> dict:
     return _search_stock_em(keyword, market_filter="HK")
 
 
-def safe_to_dict(df: pd.DataFrame, max_rows: int = 4) -> list:
+def safe_to_dict(df: pd.DataFrame, max_rows: int = None) -> list:
     """安全地将 DataFrame 转为 dict 列表，处理 NaN/NaT/Inf 等 JSON 不兼容值"""
     if df is None or df.empty:
         return []
-    subset = df.head(max_rows).copy()
+    # 如果指定了 max_rows 则限制行数，否则返回所有行
+    subset = df.head(max_rows).copy() if max_rows else df.copy()
     # 转换 Timestamp 类型为字符串
     for col in subset.columns:
         if pd.api.types.is_datetime64_any_dtype(subset[col]):

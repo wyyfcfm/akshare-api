@@ -281,50 +281,59 @@ async def get_financial_report(request: CompanyRequest):
     - company: 公司名称（如：海螺水泥、腾讯控股）
     - market: 可选，指定市场 A (A股) 或 HK (港股)，不指定则自动搜索
     """
-    company = request.company.strip()
-    market = request.market
+    try:
+        company = request.company.strip()
+        market = request.market
 
-    if not company:
-        raise HTTPException(status_code=400, detail="公司名称不能为空")
+        if not company:
+            raise HTTPException(status_code=400, detail="公司名称不能为空")
 
-    stock_info = None
+        stock_info = None
 
-    # 根据指定市场或自动搜索
-    if market == "A":
-        stock_info = search_a_stock(company)
-    elif market == "HK":
-        stock_info = search_hk_stock(company)
-    else:
-        # 先搜 A 股，再搜港股
-        stock_info = search_a_stock(company)
-        if not stock_info.get("found"):
+        # 根据指定市场或自动搜索
+        if market == "A":
+            stock_info = search_a_stock(company)
+        elif market == "HK":
             stock_info = search_hk_stock(company)
+        else:
+            # 先搜 A 股，再搜港股
+            stock_info = search_a_stock(company)
+            if not stock_info.get("found"):
+                stock_info = search_hk_stock(company)
 
-    if not stock_info.get("found"):
+        if not stock_info.get("found"):
+            return {
+                "success": False,
+                "data": {
+                    "stock_found": False,
+                    "company": company
+                },
+                "message": f"未找到「{company}」的股票信息，请检查公司名称是否正确"
+            }
+
+        # 获取财报数据
+        if stock_info["market"] == "A":
+            financial_data = get_a_stock_financial(stock_info["symbol"])
+        else:
+            financial_data = get_hk_stock_financial(stock_info["code"])
+
+        return {
+            "success": True,
+            "data": {
+                "stock_found": True,
+                "stock_info": stock_info,
+                "financial": financial_data
+            },
+            "message": "获取成功"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
         return {
             "success": False,
-            "data": {
-                "stock_found": False,
-                "company": company
-            },
-            "message": f"未找到「{company}」的股票信息，请检查公司名称是否正确"
+            "data": {"error": str(e)},
+            "message": f"服务器内部错误: {str(e)}"
         }
-
-    # 获取财报数据
-    if stock_info["market"] == "A":
-        financial_data = get_a_stock_financial(stock_info["symbol"])
-    else:
-        financial_data = get_hk_stock_financial(stock_info["code"])
-
-    return {
-        "success": True,
-        "data": {
-            "stock_found": True,
-            "stock_info": stock_info,
-            "financial": financial_data
-        },
-        "message": "获取成功"
-    }
 
 
 @app.get("/api/search")

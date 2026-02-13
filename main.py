@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from typing import Optional, Literal
 import akshare as ak
 import pandas as pd
+import datetime
 
 app = FastAPI(
     title="AKShare Financial API",
@@ -104,8 +105,54 @@ def search_hk_stock(keyword: str) -> dict:
         return {"found": False, "error": str(e)}
 
 
+def safe_to_dict(df: pd.DataFrame, max_rows: int = 4) -> list:
+    """安全地将 DataFrame 转为 dict 列表，处理 NaN 和 NaT"""
+    if df is None or df.empty:
+        return []
+    subset = df.head(max_rows).copy()
+    # 将 NaN/NaT 替换为 None，确保 JSON 序列化不出错
+    subset = subset.where(subset.notna(), None)
+    # 转换 Timestamp 类型为字符串
+    for col in subset.columns:
+        if pd.api.types.is_datetime64_any_dtype(subset[col]):
+            subset[col] = subset[col].astype(str).replace("NaT", None)
+    return subset.to_dict(orient='records')
+
+
+# A股核心财务字段（精简，避免返回 300+ 列导致超时/过大）
+A_BALANCE_KEYS = [
+    "SECUCODE", "SECURITY_NAME_ABBR", "REPORT_DATE",
+    "TOTAL_ASSETS", "TOTAL_LIABILITIES", "TOTAL_EQUITY",
+    "MONETARYFUNDS", "ACCOUNTS_RECE", "INVENTORY",
+    "FIXED_ASSET", "GOODWILL", "INTANGIBLE_ASSET",
+    "SHORT_LOAN", "LONG_LOAN", "BOND_PAYABLE",
+]
+A_PROFIT_KEYS = [
+    "SECUCODE", "SECURITY_NAME_ABBR", "REPORT_DATE",
+    "TOTAL_OPERATE_INCOME", "OPERATE_INCOME", "OPERATE_COST",
+    "SALE_EXPENSE", "MANAGE_EXPENSE", "FINANCE_EXPENSE",
+    "RESEARCH_EXPENSE", "OPERATE_PROFIT", "TOTAL_PROFIT",
+    "INCOME_TAX", "NETPROFIT", "PARENT_NETPROFIT",
+    "BASIC_EPS", "DILUTED_EPS",
+]
+A_CASHFLOW_KEYS = [
+    "SECUCODE", "SECURITY_NAME_ABBR", "REPORT_DATE",
+    "SALES_SERVICES", "TOTAL_OPERATE_INFLOW", "TOTAL_OPERATE_OUTFLOW",
+    "NETCASH_OPERATE", "NETCASH_INVEST", "NETCASH_FINANCE",
+    "CCE_ADD",
+]
+
+
+def filter_columns(df: pd.DataFrame, keys: list) -> pd.DataFrame:
+    """只保留存在的列"""
+    existing = [k for k in keys if k in df.columns]
+    return df[existing] if existing else df
+
+
 def get_a_stock_financial(symbol: str) -> dict:
-    """获取 A 股财报数据"""
+    """获取 A 股财报数据
+    symbol 格式: SH600519 / SZ000001
+    """
     result = {
         "balance_sheet": [],
         "income_statement": [],
@@ -114,35 +161,39 @@ def get_a_stock_financial(symbol: str) -> dict:
     }
 
     try:
-        # 资产负债表
+        # 资产负债表 - 按报告期
         df = ak.stock_balance_sheet_by_report_em(symbol=symbol)
         if df is not None and not df.empty:
-            result["balance_sheet"] = df.head(8).to_dict(orient='records')
+            df = filter_columns(df, A_BALANCE_KEYS)
+            result["balance_sheet"] = safe_to_dict(df)
     except Exception as e:
         result["balance_sheet_error"] = str(e)
 
     try:
-        # 利润表
+        # 利润表 - 按报告期
         df = ak.stock_profit_sheet_by_report_em(symbol=symbol)
         if df is not None and not df.empty:
-            result["income_statement"] = df.head(8).to_dict(orient='records')
+            df = filter_columns(df, A_PROFIT_KEYS)
+            result["income_statement"] = safe_to_dict(df)
     except Exception as e:
         result["income_statement_error"] = str(e)
 
     try:
-        # 现金流量表
+        # 现金流量表 - 按报告期
         df = ak.stock_cash_flow_sheet_by_report_em(symbol=symbol)
         if df is not None and not df.empty:
-            result["cash_flow"] = df.head(8).to_dict(orient='records')
+            df = filter_columns(df, A_CASHFLOW_KEYS)
+            result["cash_flow"] = safe_to_dict(df)
     except Exception as e:
         result["cash_flow_error"] = str(e)
 
     try:
-        # 财务指标
+        # 财务指标（新浪）- 需要纯数字代码 + start_year
         code = symbol[2:] if symbol.startswith(('SH', 'SZ')) else symbol
-        df = ak.stock_financial_analysis_indicator(symbol=code)
+        current_year = str(datetime.datetime.now().year - 3)
+        df = ak.stock_financial_analysis_indicator(symbol=code, start_year=current_year)
         if df is not None and not df.empty:
-            result["financial_indicator"] = df.head(8).to_dict(orient='records')
+            result["financial_indicator"] = safe_to_dict(df, max_rows=8)
     except Exception as e:
         result["financial_indicator_error"] = str(e)
 
@@ -150,7 +201,10 @@ def get_a_stock_financial(symbol: str) -> dict:
 
 
 def get_hk_stock_financial(code: str) -> dict:
-    """获取港股财报数据"""
+    """获取港股财报数据
+    code 格式: 纯数字如 00700
+    AKShare 接口: stock_financial_hk_report_em(stock, symbol, indicator)
+    """
     result = {
         "balance_sheet": [],
         "income_statement": [],
@@ -158,23 +212,26 @@ def get_hk_stock_financial(code: str) -> dict:
     }
 
     try:
-        df = ak.stock_hk_financial_report_em(stock=code, symbol="资产负债表")
+        # 港股资产负债表（年度）
+        df = ak.stock_financial_hk_report_em(stock=code, symbol="资产负债表", indicator="年度")
         if df is not None and not df.empty:
-            result["balance_sheet"] = df.head(8).to_dict(orient='records')
+            result["balance_sheet"] = safe_to_dict(df)
     except Exception as e:
         result["balance_sheet_error"] = str(e)
 
     try:
-        df = ak.stock_hk_financial_report_em(stock=code, symbol="利润表")
+        # 港股利润表（年度）
+        df = ak.stock_financial_hk_report_em(stock=code, symbol="利润表", indicator="年度")
         if df is not None and not df.empty:
-            result["income_statement"] = df.head(8).to_dict(orient='records')
+            result["income_statement"] = safe_to_dict(df)
     except Exception as e:
         result["income_statement_error"] = str(e)
 
     try:
-        df = ak.stock_hk_financial_report_em(stock=code, symbol="现金流量表")
+        # 港股现金流量表（年度）
+        df = ak.stock_financial_hk_report_em(stock=code, symbol="现金流量表", indicator="年度")
         if df is not None and not df.empty:
-            result["cash_flow"] = df.head(8).to_dict(orient='records')
+            result["cash_flow"] = safe_to_dict(df)
     except Exception as e:
         result["cash_flow_error"] = str(e)
 

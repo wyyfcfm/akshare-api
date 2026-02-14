@@ -5,12 +5,16 @@ AKShare Financial Report API
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 from typing import Optional, Literal
 import akshare as ak
 import pandas as pd
 import datetime
 import math
+import os
+from pathlib import Path
 
 app = FastAPI(
     title="AKShare Financial API",
@@ -461,9 +465,54 @@ def get_hk_stock_financial(code: str) -> dict:
     return result
 
 
+# 挂载静态文件
+static_dir = Path(__file__).parent / "static"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+
 @app.get("/")
 async def root():
+    """首页 - 返回可视化界面"""
+    static_index = static_dir / "index.html"
+    if static_index.exists():
+        with open(static_index, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
     return {"status": "ok", "message": "AKShare Financial API is running"}
+
+
+@app.get("/api/mindmaps")
+async def list_mindmaps():
+    """获取所有思维导图列表"""
+    mindmap_dir = Path(__file__).parent / "思维导图"
+    if not mindmap_dir.exists():
+        return {"mindmaps": []}
+    
+    mindmaps = []
+    for file in mindmap_dir.glob("*.md"):
+        mindmaps.append({
+            "name": file.stem,
+            "filename": file.name,
+            "size": file.stat().st_size
+        })
+    return {"mindmaps": mindmaps}
+
+
+@app.get("/api/mindmap/{filename}")
+async def get_mindmap(filename: str):
+    """获取指定思维导图内容"""
+    mindmap_dir = Path(__file__).parent / "思维导图"
+    file_path = mindmap_dir / filename
+    
+    if not file_path.exists() or not file_path.suffix == ".md":
+        raise HTTPException(status_code=404, detail="思维导图文件未找到")
+    
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return {"filename": filename, "content": content}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"读取文件失败: {str(e)}")
 
 
 @app.get("/health")

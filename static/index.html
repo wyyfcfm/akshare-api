@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AKShare 财报数据可视化平台</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <!-- Markdown解析库 -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+    <!-- Mermaid图表库 -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- 侧边导航栏 -->
+        <aside class="sidebar">
+            <div class="logo">
+                <h1>📊 AKShare</h1>
+                <p>财报数据平台</p>
+            </div>
+            <nav class="nav-menu">
+                <a href="#" class="nav-item active" data-tab="api">
+                    <span class="icon">🔍</span>
+                    <span>接口测试</span>
+                </a>
+                <a href="#" class="nav-item" data-tab="mindmap">
+                    <span class="icon">🧠</span>
+                    <span>思维导图</span>
+                </a>
+                <a href="#" class="nav-item" data-tab="docs">
+                    <span class="icon">📚</span>
+                    <span>API文档</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <p>Powered by AKShare</p>
+                <p class="version">v1.0.0</p>
+            </div>
+        </aside>
+
+        <!-- 主内容区 -->
+        <main class="main-content">
+            <!-- API测试面板 -->
+            <div id="api-panel" class="panel active">
+                <div class="panel-header">
+                    <h2>📈 财报数据查询</h2>
+                    <p>输入公司名称查询 A股/港股 财务数据</p>
+                </div>
+
+                <div class="search-section">
+                    <div class="search-box">
+                        <input type="text" id="company-input" placeholder="输入公司名称，如：腾讯控股、茅台" />
+                        <select id="market-select">
+                            <option value="">自动识别</option>
+                            <option value="A">A股</option>
+                            <option value="HK">港股</option>
+                        </select>
+                        <button id="search-btn" class="btn-primary">查询</button>
+                    </div>
+                    <div class="quick-search">
+                        <span>快速查询：</span>
+                        <button class="btn-tag" data-company="茅台" data-market="A">贵州茅台</button>
+                        <button class="btn-tag" data-company="比亚迪" data-market="A">比亚迪</button>
+                        <button class="btn-tag" data-company="腾讯控股" data-market="HK">腾讯控股</button>
+                        <button class="btn-tag" data-company="阿里巴巴" data-market="HK">阿里巴巴</button>
+                    </div>
+                </div>
+
+                <!-- 加载状态 -->
+                <div id="loading" class="loading" style="display: none;">
+                    <div class="spinner"></div>
+                    <p>正在查询数据...</p>
+                </div>
+
+                <!-- 结果展示区 -->
+                <div id="result-section" class="result-section" style="display: none;">
+                    <!-- 股票信息卡片 -->
+                    <div id="stock-info" class="info-card"></div>
+
+                    <!-- 财报数据标签页 -->
+                    <div class="tabs">
+                        <button class="tab-btn active" data-report="balance">资产负债表</button>
+                        <button class="tab-btn" data-report="income">利润表</button>
+                        <button class="tab-btn" data-report="cashflow">现金流量表</button>
+                        <button class="tab-btn" data-report="indicator">财务指标</button>
+                    </div>
+
+                    <!-- 财报表格 -->
+                    <div id="report-content" class="report-content"></div>
+                </div>
+
+                <!-- 错误提示 -->
+                <div id="error-message" class="error-message" style="display: none;"></div>
+            </div>
+
+            <!-- 思维导图面板 -->
+            <div id="mindmap-panel" class="panel">
+                <div class="panel-header">
+                    <h2>🧠 投资学习思维导图</h2>
+                    <p>经典投资书籍思维导图，助你系统学习投资知识</p>
+                </div>
+
+                <div class="mindmap-list" id="mindmap-list">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p>加载中...</p>
+                    </div>
+                </div>
+
+                <div id="mindmap-viewer" class="mindmap-viewer" style="display: none;">
+                    <div class="mindmap-header">
+                        <button id="back-to-list" class="btn-secondary">← 返回列表</button>
+                        <h3 id="mindmap-title"></h3>
+                    </div>
+                    <div id="mindmap-content" class="markdown-content"></div>
+                </div>
+            </div>
+
+            <!-- API文档面板 -->
+            <div id="docs-panel" class="panel">
+                <div class="panel-header">
+                    <h2>📚 API 文档</h2>
+                    <p>接口调用说明与示例</p>
+                </div>
+
+                <div class="docs-content">
+                    <section class="doc-section">
+                        <h3>1. 获取财报数据</h3>
+                        <div class="code-block">
+                            <pre><code>POST /api/financial-report
+Content-Type: application/json
+
+{
+  "company": "腾讯控股",
+  "market": "HK"  // 可选: "A" | "HK" | null(自动)
+}</code></pre>
+                        </div>
+
+                        <h4>响应示例</h4>
+                        <div class="code-block">
+                            <pre><code>{
+  "success": true,
+  "data": {
+    "stock_found": true,
+    "stock_info": {
+      "code": "00700",
+      "name": "腾讯控股",
+      "market": "HK"
+    },
+    "financial": {
+      "balance_sheet": [...],
+      "income_statement": [...],
+      "cash_flow": [...]
+    }
+  }
+}</code></pre>
+                        </div>
+                    </section>
+
+                    <section class="doc-section">
+                        <h3>2. 搜索股票</h3>
+                        <div class="code-block">
+                            <pre><code>GET /api/search?keyword=茅台&market=A</code></pre>
+                        </div>
+                    </section>
+
+                    <section class="doc-section">
+                        <h3>3. 获取思维导图列表</h3>
+                        <div class="code-block">
+                            <pre><code>GET /api/mindmaps</code></pre>
+                        </div>
+                    </section>
+
+                    <section class="doc-section">
+                        <h3>4. 获取思维导图内容</h3>
+                        <div class="code-block">
+                            <pre><code>GET /api/mindmap/{filename}</code></pre>
+                        </div>
+                    </section>
+
+                    <section class="doc-section">
+                        <h3>字段说明</h3>
+                        <table class="doc-table">
+                            <thead>
+                                <tr>
+                                    <th>字段名</th>
+                                    <th>说明</th>
+                                    <th>示例</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>总资产</td>
+                                    <td>企业拥有的全部资产</td>
+                                    <td>1234.56亿</td>
+                                </tr>
+                                <tr>
+                                    <td>营业收入</td>
+                                    <td>主营业务收入</td>
+                                    <td>567.89亿</td>
+                                </tr>
+                                <tr>
+                                    <td>归母净利润</td>
+                                    <td>归属于母公司股东的净利润</td>
+                                    <td>123.45亿</td>
+                                </tr>
+                                <tr>
+                                    <td>毛利率</td>
+                                    <td>(营业收入-营业成本)/营业收入</td>
+                                    <td>45.67%</td>
+                                </tr>
+                                <tr>
+                                    <td>资产负债率</td>
+                                    <td>总负债/总资产</td>
+                                    <td>38.92%</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </section>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

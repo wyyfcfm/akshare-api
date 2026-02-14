@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Markdown 文档查看器 - AKShare</title>
+    <link rel="stylesheet" href="/static/markdown-viewer.css">
+    <!-- Marked.js - Markdown 解析 -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+    <!-- Highlight.js - 代码高亮 -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/highlight.min.js"></script>
+    <!-- Mermaid - 流程图支持 -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- 侧边栏 - 文件列表 -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1>📝 Markdown 文档</h1>
+                <button class="btn-refresh" onclick="loadFileList()" title="刷新文件列表">
+                    🔄
+                </button>
+            </div>
+            
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="搜索文档..." onkeyup="filterFiles()">
+            </div>
+            
+            <div class="file-count">
+                共 <span id="fileCount">0</span> 个文档
+            </div>
+            
+            <div class="file-list" id="fileList">
+                <div class="loading">加载中...</div>
+            </div>
+            
+            <div class="sidebar-footer">
+                <a href="/" class="btn-back">← 返回首页</a>
+            </div>
+        </aside>
+        
+        <!-- 主内容区 - Markdown 渲染 -->
+        <main class="main-content">
+            <div class="welcome-screen" id="welcomeScreen">
+                <div class="welcome-icon">📄</div>
+                <h2>Markdown 文档查看器</h2>
+                <p>从左侧选择一个 Markdown 文件开始阅读</p>
+                <div class="features">
+                    <div class="feature-item">
+                        <span class="feature-icon">✨</span>
+                        <span>支持 GitHub 风格 Markdown</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feature-icon">🎨</span>
+                        <span>代码语法高亮</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feature-icon">📊</span>
+                        <span>Mermaid 流程图渲染</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="feature-icon">🔗</span>
+                        <span>自动生成目录导航</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="document-view" id="documentView" style="display: none;">
+                <div class="document-header">
+                    <div class="document-info">
+                        <h1 id="docTitle">文档标题</h1>
+                        <div class="document-meta">
+                            <span id="docPath"></span>
+                            <span id="docSize"></span>
+                        </div>
+                    </div>
+                    <div class="document-actions">
+                        <button class="btn-toggle-toc" onclick="toggleTOC()" title="显示/隐藏目录">
+                            📑 目录
+                        </button>
+                        <button class="btn-print" onclick="window.print()" title="打印">
+                            🖨️ 打印
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="document-body">
+                    <!-- 目录 -->
+                    <nav class="table-of-contents" id="tableOfContents">
+                        <div class="toc-header">
+                            <h3>📑 目录</h3>
+                            <button class="btn-close-toc" onclick="toggleTOC()">✕</button>
+                        </div>
+                        <div class="toc-content" id="tocContent"></div>
+                    </nav>
+                    
+                    <!-- Markdown 内容 -->
+                    <article class="markdown-content" id="markdownContent">
+                        <div class="loading">加载中...</div>
+                    </article>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <script src="/static/markdown-viewer.js"></script>
+</body>
+</html>

@@ -515,6 +515,67 @@ async def get_mindmap(filename: str):
         raise HTTPException(status_code=500, detail=f"读取文件失败: {str(e)}")
 
 
+@app.get("/api/markdown/list")
+async def list_markdown_files():
+    """获取项目中所有 Markdown 文件列表"""
+    project_root = Path(__file__).parent
+    markdown_files = []
+    
+    # 递归查找所有 .md 文件
+    for md_file in project_root.rglob("*.md"):
+        # 排除 node_modules, .git 等目录
+        if any(part.startswith('.') or part in ['node_modules', '__pycache__'] 
+               for part in md_file.parts):
+            continue
+        
+        # 获取相对路径
+        rel_path = md_file.relative_to(project_root)
+        
+        markdown_files.append({
+            "name": md_file.stem,
+            "filename": md_file.name,
+            "path": str(rel_path),
+            "size": md_file.stat().st_size,
+            "modified": md_file.stat().st_mtime
+        })
+    
+    # 按修改时间倒序排序
+    markdown_files.sort(key=lambda x: x["modified"], reverse=True)
+    
+    return {"files": markdown_files, "count": len(markdown_files)}
+
+
+@app.get("/api/markdown/content")
+async def get_markdown_content(path: str):
+    """获取指定 Markdown 文件内容"""
+    project_root = Path(__file__).parent
+    file_path = project_root / path
+    
+    # 安全检查：确保文件在项目目录内
+    try:
+        file_path = file_path.resolve()
+        project_root = project_root.resolve()
+        if not str(file_path).startswith(str(project_root)):
+            raise HTTPException(status_code=403, detail="无权访问该文件")
+    except Exception:
+        raise HTTPException(status_code=400, detail="无效的文件路径")
+    
+    if not file_path.exists() or file_path.suffix != ".md":
+        raise HTTPException(status_code=404, detail="Markdown 文件未找到")
+    
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return {
+            "filename": file_path.name,
+            "path": path,
+            "content": content,
+            "size": file_path.stat().st_size
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"读取文件失败: {str(e)}")
+
+
 @app.get("/health")
 async def health():
     return {"status": "healthy"}

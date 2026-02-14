@@ -329,40 +329,36 @@ def filter_annual_and_latest(df: pd.DataFrame, annual_years: int = 3) -> pd.Data
         # 确保日期列是 datetime 类型
         df[date_column] = pd.to_datetime(df[date_column])
         
+        # 按日期降序排序
+        df_sorted = df.sort_values(by=date_column, ascending=False).reset_index(drop=True)
+        
         # 获取最新日期
-        latest_date = df[date_column].max()
+        latest_date = df_sorted[date_column].iloc[0]
         
         # 判断最新数据是否是年报（12月31日）
         is_annual = latest_date.month == 12 and latest_date.day == 31
-        
-        # 获取当前年份
-        current_year = datetime.datetime.now().year
-        
-        # 计算年报的起始年份
-        start_year = current_year - annual_years
         
         result_rows = []
         
         # 1. 如果最新数据不是年报，加入最新季报
         if not is_annual:
-            result_rows.append(df.iloc[0])
+            result_rows.append(df_sorted.iloc[0])
         
-        # 2. 加入最近N年的年报
-        for year in range(current_year, start_year - 1, -1):
-            # 筛选该年的12月31日数据
-            annual_data = df[
-                (df[date_column].dt.year == year) & 
-                (df[date_column].dt.month == 12) &
-                (df[date_column].dt.day == 31)
-            ]
-            if not annual_data.empty:
-                result_rows.append(annual_data.iloc[0])
+        # 2. 筛选所有年报（12月31日），取最近的N条
+        annual_reports = df_sorted[
+            (df_sorted[date_column].dt.month == 12) &
+            (df_sorted[date_column].dt.day == 31)
+        ]
+        
+        # 取最近的N年年报
+        for idx, row in annual_reports.head(annual_years).iterrows():
+            result_rows.append(row)
         
         if result_rows:
             filtered_df = pd.DataFrame(result_rows).reset_index(drop=True)
             return filtered_df
         else:
-            return df.head(4)  # 降级方案：返回前4条
+            return df_sorted.head(4)  # 降级方案：返回前4条
         
     except Exception as e:
         print(f"日期过滤失败: {e}")
@@ -416,7 +412,8 @@ def get_a_stock_financial(symbol: str) -> dict:
         current_year = str(datetime.datetime.now().year - 3)
         df = ak.stock_financial_analysis_indicator(symbol=code, start_year=current_year)
         if df is not None and not df.empty:
-            result["financial_indicator"] = safe_to_dict(df)  # 返回所有数据
+            df = filter_annual_and_latest(df, annual_years=3)  # 最新季报 + 最近3年年报
+            result["financial_indicator"] = safe_to_dict(df)
     except Exception as e:
         result["financial_indicator_error"] = str(e)
 

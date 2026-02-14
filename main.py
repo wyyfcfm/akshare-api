@@ -115,6 +115,133 @@ def search_hk_stock(keyword: str) -> dict:
     return _search_stock_em(keyword, market_filter="HK")
 
 
+def format_number_readable(value):
+    """将数字格式化为易读形式（亿/万）"""
+    if value is None or value == "" or (isinstance(value, float) and math.isnan(value)):
+        return None
+    try:
+        num = float(value)
+        if abs(num) >= 100000000:  # 亿
+            return f"{num/100000000:.2f}亿"
+        elif abs(num) >= 10000:  # 万
+            return f"{num/10000:.2f}万"
+        else:
+            return round(num, 2)
+    except:
+        return value
+
+
+# 中文字段映射
+FIELD_NAME_MAPPING = {
+    # 基本信息
+    'SECUCODE': '证券代码',
+    'SECURITY_NAME_ABBR': '股票简称',
+    'REPORT_DATE': '报告期',
+    
+    # 资产负债表
+    'TOTAL_ASSETS': '总资产',
+    'TOTAL_LIABILITIES': '总负债',
+    'TOTAL_EQUITY': '股东权益',
+    'MONETARYFUNDS': '货币资金',
+    'ACCOUNTS_RECE': '应收账款',
+    'INVENTORY': '存货',
+    'FIXED_ASSET': '固定资产',
+    'GOODWILL': '商誉',
+    'INTANGIBLE_ASSET': '无形资产',
+    'SHORT_LOAN': '短期借款',
+    'LONG_LOAN': '长期借款',
+    'BOND_PAYABLE': '应付债券',
+    
+    # 利润表
+    'TOTAL_OPERATE_INCOME': '营业总收入',
+    'OPERATE_INCOME': '营业收入',
+    'OPERATE_COST': '营业成本',
+    'SALE_EXPENSE': '销售费用',
+    'MANAGE_EXPENSE': '管理费用',
+    'FINANCE_EXPENSE': '财务费用',
+    'RESEARCH_EXPENSE': '研发费用',
+    'OPERATE_PROFIT': '营业利润',
+    'TOTAL_PROFIT': '利润总额',
+    'INCOME_TAX': '所得税',
+    'NETPROFIT': '净利润',
+    'PARENT_NETPROFIT': '归母净利润',
+    'BASIC_EPS': '基本每股收益',
+    'DILUTED_EPS': '稀释每股收益',
+    
+    # 现金流量表
+    'SALES_SERVICES': '销售商品收到现金',
+    'TOTAL_OPERATE_INFLOW': '经营活动现金流入',
+    'TOTAL_OPERATE_OUTFLOW': '经营活动现金流出',
+    'NETCASH_OPERATE': '经营活动现金流量净额',
+    'NETCASH_INVEST': '投资活动现金流量净额',
+    'NETCASH_FINANCE': '筹资活动现金流量净额',
+    'CCE_ADD': '现金净增加额',
+}
+
+
+def format_for_ai_analysis(df: pd.DataFrame) -> list:
+    """
+    将DataFrame格式化为AI友好的中文数据
+    - 转换字段名为中文
+    - 格式化数字为易读形式
+    - 添加计算指标
+    """
+    if df is None or df.empty:
+        return []
+    
+    result = []
+    for idx, row in df.iterrows():
+        formatted_row = {}
+        
+        # 基本信息（保持原样）
+        for field in ['SECUCODE', 'SECURITY_NAME_ABBR', 'REPORT_DATE']:
+            if field in row:
+                cn_name = FIELD_NAME_MAPPING.get(field, field)
+                value = row[field]
+                if field == 'REPORT_DATE':
+                    # 转换为字符串，只保留日期部分
+                    value = str(value).split()[0] if pd.notna(value) else None
+                formatted_row[cn_name] = value
+        
+        # 财务数字（格式化）
+        for field, cn_name in FIELD_NAME_MAPPING.items():
+            if field in row and field not in ['SECUCODE', 'SECURITY_NAME_ABBR', 'REPORT_DATE']:
+                value = row[field]
+                formatted_row[cn_name] = format_number_readable(value)
+        
+        # 计算衍生指标
+        if '营业收入' in formatted_row and '营业成本' in formatted_row:
+            try:
+                revenue = float(row.get('OPERATE_INCOME', 0))
+                cost = float(row.get('OPERATE_COST', 0))
+                if revenue > 0:
+                    formatted_row['毛利率'] = f"{(revenue - cost) / revenue * 100:.2f}%"
+            except:
+                pass
+        
+        if '归母净利润' in formatted_row and '营业收入' in formatted_row:
+            try:
+                profit = float(row.get('PARENT_NETPROFIT', 0))
+                revenue = float(row.get('OPERATE_INCOME', 0))
+                if revenue > 0:
+                    formatted_row['净利率'] = f"{profit / revenue * 100:.2f}%"
+            except:
+                pass
+        
+        if '总负债' in formatted_row and '总资产' in formatted_row:
+            try:
+                liab = float(row.get('TOTAL_LIABILITIES', 0))
+                assets = float(row.get('TOTAL_ASSETS', 0))
+                if assets > 0:
+                    formatted_row['资产负债率'] = f"{liab / assets * 100:.2f}%"
+            except:
+                pass
+        
+        result.append(formatted_row)
+    
+    return result
+
+
 def safe_to_dict(df: pd.DataFrame, max_rows: int = None) -> list:
     """安全地将 DataFrame 转为 dict 列表，处理 NaN/NaT/Inf 等 JSON 不兼容值"""
     if df is None or df.empty:
@@ -174,6 +301,74 @@ def filter_columns(df: pd.DataFrame, keys: list) -> pd.DataFrame:
     return df[existing] if existing else df
 
 
+def filter_annual_and_latest(df: pd.DataFrame, annual_years: int = 3) -> pd.DataFrame:
+    """
+    只保留最新季报 + 最近N年年报
+    
+    Args:
+        df: 包含日期列的 DataFrame (REPORT_DATE 或 报告期)
+        annual_years: 保留最近几年的年报，默认3年
+    
+    Returns:
+        过滤后的 DataFrame（最新季报 + 最近N年年报）
+    """
+    if df is None or df.empty:
+        return df
+    
+    # 尝试找到日期列
+    date_column = None
+    for col in ['REPORT_DATE', '报告期', '截止日期', '日期']:
+        if col in df.columns:
+            date_column = col
+            break
+    
+    if date_column is None:
+        return df
+    
+    try:
+        # 确保日期列是 datetime 类型
+        df[date_column] = pd.to_datetime(df[date_column])
+        
+        # 获取最新日期
+        latest_date = df[date_column].max()
+        
+        # 判断最新数据是否是年报（12月31日）
+        is_annual = latest_date.month == 12 and latest_date.day == 31
+        
+        # 获取当前年份
+        current_year = datetime.datetime.now().year
+        
+        # 计算年报的起始年份
+        start_year = current_year - annual_years
+        
+        result_rows = []
+        
+        # 1. 如果最新数据不是年报，加入最新季报
+        if not is_annual:
+            result_rows.append(df.iloc[0])
+        
+        # 2. 加入最近N年的年报
+        for year in range(current_year, start_year - 1, -1):
+            # 筛选该年的12月31日数据
+            annual_data = df[
+                (df[date_column].dt.year == year) & 
+                (df[date_column].dt.month == 12) &
+                (df[date_column].dt.day == 31)
+            ]
+            if not annual_data.empty:
+                result_rows.append(annual_data.iloc[0])
+        
+        if result_rows:
+            filtered_df = pd.DataFrame(result_rows).reset_index(drop=True)
+            return filtered_df
+        else:
+            return df.head(4)  # 降级方案：返回前4条
+        
+    except Exception as e:
+        print(f"日期过滤失败: {e}")
+        return df
+
+
 def get_a_stock_financial(symbol: str) -> dict:
     """获取 A 股财报数据
     symbol 格式: SH600519 / SZ000001
@@ -190,7 +385,8 @@ def get_a_stock_financial(symbol: str) -> dict:
         df = ak.stock_balance_sheet_by_report_em(symbol=symbol)
         if df is not None and not df.empty:
             df = filter_columns(df, A_BALANCE_KEYS)
-            result["balance_sheet"] = safe_to_dict(df)
+            df = filter_annual_and_latest(df, annual_years=3)  # 最新季报 + 最近3年年报
+            result["balance_sheet"] = format_for_ai_analysis(df)  # 使用AI友好格式
     except Exception as e:
         result["balance_sheet_error"] = str(e)
 
@@ -199,7 +395,8 @@ def get_a_stock_financial(symbol: str) -> dict:
         df = ak.stock_profit_sheet_by_report_em(symbol=symbol)
         if df is not None and not df.empty:
             df = filter_columns(df, A_PROFIT_KEYS)
-            result["income_statement"] = safe_to_dict(df)
+            df = filter_annual_and_latest(df, annual_years=3)  # 最新季报 + 最近3年年报
+            result["income_statement"] = format_for_ai_analysis(df)  # 使用AI友好格式
     except Exception as e:
         result["income_statement_error"] = str(e)
 
@@ -208,7 +405,8 @@ def get_a_stock_financial(symbol: str) -> dict:
         df = ak.stock_cash_flow_sheet_by_report_em(symbol=symbol)
         if df is not None and not df.empty:
             df = filter_columns(df, A_CASHFLOW_KEYS)
-            result["cash_flow"] = safe_to_dict(df)
+            df = filter_annual_and_latest(df, annual_years=3)  # 最新季报 + 最近3年年报
+            result["cash_flow"] = format_for_ai_analysis(df)  # 使用AI友好格式
     except Exception as e:
         result["cash_flow_error"] = str(e)
 
@@ -218,7 +416,7 @@ def get_a_stock_financial(symbol: str) -> dict:
         current_year = str(datetime.datetime.now().year - 3)
         df = ak.stock_financial_analysis_indicator(symbol=code, start_year=current_year)
         if df is not None and not df.empty:
-            result["financial_indicator"] = safe_to_dict(df, max_rows=8)
+            result["financial_indicator"] = safe_to_dict(df)  # 返回所有数据
     except Exception as e:
         result["financial_indicator_error"] = str(e)
 
@@ -240,7 +438,8 @@ def get_hk_stock_financial(code: str) -> dict:
         # 港股资产负债表（年度）
         df = ak.stock_financial_hk_report_em(stock=code, symbol="资产负债表", indicator="年度")
         if df is not None and not df.empty:
-            result["balance_sheet"] = safe_to_dict(df)
+            df = filter_annual_and_latest(df, annual_years=3)  # 最近3年年报
+            result["balance_sheet"] = safe_to_dict(df)  # 港股保留原格式
     except Exception as e:
         result["balance_sheet_error"] = str(e)
 
@@ -248,7 +447,8 @@ def get_hk_stock_financial(code: str) -> dict:
         # 港股利润表（年度）
         df = ak.stock_financial_hk_report_em(stock=code, symbol="利润表", indicator="年度")
         if df is not None and not df.empty:
-            result["income_statement"] = safe_to_dict(df)
+            df = filter_annual_and_latest(df, annual_years=3)  # 最近3年年报
+            result["income_statement"] = safe_to_dict(df)  # 港股保留原格式
     except Exception as e:
         result["income_statement_error"] = str(e)
 
@@ -256,7 +456,8 @@ def get_hk_stock_financial(code: str) -> dict:
         # 港股现金流量表（年度）
         df = ak.stock_financial_hk_report_em(stock=code, symbol="现金流量表", indicator="年度")
         if df is not None and not df.empty:
-            result["cash_flow"] = safe_to_dict(df)
+            df = filter_annual_and_latest(df, annual_years=3)  # 最近3年年报
+            result["cash_flow"] = safe_to_dict(df)  # 港股保留原格式
     except Exception as e:
         result["cash_flow_error"] = str(e)
 
